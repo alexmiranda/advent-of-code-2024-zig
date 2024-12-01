@@ -29,13 +29,17 @@ pub fn main() !void {
     defer input_file.close();
 
     const reader = input_file.reader();
-    const part_1 = try part1(ally, reader);
+    const part_1 = try distanceBetweenLists(ally, reader);
+
+    try input_file.seekTo(0);
+    const part_2 = try similarityScore(ally, reader);
 
     const stdout = bw.writer();
     try stdout.print("Part 1: {d}\n", .{part_1});
+    try stdout.print("Part 2: {d}\n", .{part_2});
 }
 
-fn part1(ally: mem.Allocator, reader: anytype) !u32 {
+fn distanceBetweenLists(ally: mem.Allocator, reader: anytype) !u32 {
     var left_locations = std.ArrayList(i32).init(ally);
     defer left_locations.deinit();
 
@@ -62,11 +66,37 @@ fn part1(ally: mem.Allocator, reader: anytype) !u32 {
     return total_distance;
 }
 
+fn similarityScore(ally: mem.Allocator, reader: anytype) !u64 {
+    var left_locations = std.ArrayList(i32).init(ally);
+    defer left_locations.deinit();
+
+    var right_locations = std.AutoHashMap(i32, i32).init(ally);
+    defer right_locations.deinit();
+
+    var buf: [14]u8 = undefined;
+    while (try reader.readUntilDelimiterOrEof(&buf, '\n')) |read| {
+        if (read.len == 0) continue;
+        var it = mem.tokenizeScalar(u8, read, ' ');
+        const lval = fmt.parseInt(i32, it.next().?, 10) catch @panic("problem with input: could not parse number");
+        try left_locations.append(lval);
+        const rval = fmt.parseInt(i32, it.next().?, 10) catch @panic("problem with input: could not parse number");
+        const gop = try right_locations.getOrPut(rval);
+        gop.value_ptr.* = if (gop.found_existing) gop.value_ptr.* + 1 else 1;
+    }
+
+    var similarity_score: u64 = 0;
+    for (left_locations.items) |lhs| {
+        similarity_score += @abs(lhs * (right_locations.get(lhs) orelse 0));
+    }
+    return similarity_score;
+}
+
 test "part 1" {
     var fbs = io.fixedBufferStream(example);
-    try expectEqual(11, part1(testing.allocator, fbs.reader()));
+    try expectEqual(11, distanceBetweenLists(testing.allocator, fbs.reader()));
 }
 
 test "part 2" {
-    return error.SkipZigTest;
+    var fbs = io.fixedBufferStream(example);
+    try expectEqual(31, similarityScore(testing.allocator, fbs.reader()));
 }
