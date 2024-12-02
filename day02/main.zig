@@ -120,13 +120,11 @@ fn countSafeReportsRevised(ally: mem.Allocator, reader: anytype, max_line_length
 }
 
 fn safe(levels: []u32) bool {
-    var it = mem.window(u32, levels, 2, 1);
-    const pair_head = it.next().?;
-    var a = pair_head[0];
-    var b = pair_head[1];
-    if (b == a) return false;
+    var a = levels[0];
+    var b = levels[1];
     const is_increasing = b > a;
-    if ((is_increasing and b - a > 3) or (!is_increasing and a - b > 3)) return false;
+
+    var it = mem.window(u32, levels, 2, 1);
     while (it.next()) |pair| {
         a = pair[0];
         b = pair[1];
