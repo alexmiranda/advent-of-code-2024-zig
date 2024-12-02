@@ -30,8 +30,12 @@ pub fn main() !void {
     const reader = input_file.reader();
     const part_1 = try countSafeReports(ally, reader, 23);
 
+    try input_file.seekTo(0);
+    const part_2 = try countSafeReportsRevised(ally, reader, 23);
+
     const stdout = bw.writer();
     try stdout.print("Part 1: {d}\n", .{part_1});
+    try stdout.print("Part 2: {d}\n", .{part_2});
 }
 
 fn countSafeReports(ally: mem.Allocator, reader: anytype, max_line_length: usize) !usize {
@@ -69,6 +73,52 @@ fn countSafeReports(ally: mem.Allocator, reader: anytype, max_line_length: usize
     return count;
 }
 
+fn countSafeReportsRevised(ally: mem.Allocator, reader: anytype, max_line_length: usize) !usize {
+    var bytes = try std.ArrayList(u8).initCapacity(ally, max_line_length);
+    defer bytes.deinit();
+
+    var levels = try std.ArrayList(u32).initCapacity(ally, 8);
+    defer levels.deinit();
+
+    var count: usize = 0;
+    while (true) {
+        defer bytes.clearRetainingCapacity();
+
+        // first we read from the input line by line
+        reader.streamUntilDelimiter(bytes.writer(), '\n', null) catch |err| {
+            switch (err) {
+                error.EndOfStream => break,
+                else => panic("Error reading input: {any}", .{err}),
+            }
+        };
+        if (bytes.items.len == 0) break;
+        if (bytes.items[0] == '#') continue;
+
+        // and then parse each report
+        levels.clearRetainingCapacity();
+        var it = mem.tokenizeScalar(u8, bytes.items, ' ');
+        while (it.next()) |tok| {
+            const n = fmt.parseInt(u32, tok, 10) catch panic("couldn't parse number: {s}", .{tok});
+            levels.appendAssumeCapacity(n);
+        }
+
+        // if the report is safe, we count it
+        if (safe(levels.items)) {
+            count += 1;
+        } else {
+            for (0..levels.items.len) |i| {
+                const tentative_report = try mem.concat(ally, u32, &[_][]u32{ levels.items[0..i], levels.items[i + 1 ..] });
+                defer ally.free(tentative_report);
+                if (safe(tentative_report)) {
+                    count += 1;
+                    break;
+                }
+            }
+        }
+    }
+    return count;
+}
+
 fn safe(levels: []u32) bool {
     var it = mem.window(u32, levels, 2, 1);
     const pair_head = it.next().?;
@@ -99,5 +149,6 @@ test "part 1" {
 }
 
 test "part 2" {
-    return error.SkipZigTest;
+    var fbs = io.fixedBufferStream(example);
+    try expectEqual(4, countSafeReportsRevised(testing.allocator, fbs.reader(), 9));
 }
