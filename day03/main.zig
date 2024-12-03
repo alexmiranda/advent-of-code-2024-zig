@@ -4,7 +4,8 @@ const panic = std.debug.panic;
 const assert = std.debug.assert;
 const testing = std.testing;
 const expectEqual = std.testing.expectEqual;
-const example = @embedFile("example.txt");
+const example1 = @embedFile("example1.txt");
+const example2 = @embedFile("example2.txt");
 
 pub fn main() !void {
     const stdout_file = std.io.getStdOut().writer();
@@ -25,6 +26,9 @@ pub fn main() !void {
     const read = try input_file.readAll(&buf);
     const answer_p1 = compute(buf[0..read]);
     try stdout.print("Part 1: {d}\n", .{answer_p1});
+
+    const answer_p2 = computeEnabledOnly(buf[0..read]);
+    try stdout.print("Part 2: {d}\n", .{answer_p2});
 }
 
 fn compute(buffer: []const u8) u32 {
@@ -32,7 +36,6 @@ fn compute(buffer: []const u8) u32 {
     var start: usize = 0;
     // first we need to find the beginnig of the expr mul(
     while (std.mem.indexOfPos(u8, buffer, start, "mul(")) |pos| {
-        print("pos: {d}\n", .{pos});
         // move the start to the found position
         start = pos;
         // print("pos: {d} match: {s}\n", .{ pos, buffer[start .. start + 4 + @min(7, buffer.len - pos)] });
@@ -70,10 +73,22 @@ fn compute(buffer: []const u8) u32 {
     return sum;
 }
 
+fn computeEnabledOnly(buffer: []const u8) u32 {
+    var it = std.mem.tokenizeSequence(u8, buffer, "do");
+    var sum: u32 = 0;
+    var enabled = true;
+    while (it.next()) |tok| {
+        if (std.mem.startsWith(u8, tok, "()")) enabled = true;
+        if (std.mem.startsWith(u8, tok, "n't()")) enabled = false;
+        if (enabled) sum += compute(tok);
+    }
+    return sum;
+}
+
 test "part 1" {
-    try expectEqual(161, compute(example));
+    try expectEqual(161, compute(example1));
 }
 
 test "part 2" {
-    return error.SkipZigTest;
+    try expectEqual(48, computeEnabledOnly(example2));
 }
