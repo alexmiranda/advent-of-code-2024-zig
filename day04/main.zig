@@ -13,7 +13,7 @@ pub fn main() !void {
     const stdout = bw.writer();
 
     const input_file =
-        std.fs.cwd().openFile("day04/input.txt", .{}) catch |err| {
+        std.fs.cwd().openFile("day04/input.txt", .{ .mode = .read_only }) catch |err| {
         switch (err) {
             error.FileNotFound => panic("Input file is missing", .{}),
             else => panic("{any}", .{err}),
@@ -33,6 +33,9 @@ pub fn main() !void {
 
     const answer_p1 = findXmas(grid);
     try stdout.print("Part 1: {d}\n", .{answer_p1});
+
+    const answer_p2 = findX_mas(grid);
+    try stdout.print("Part 2: {d}\n", .{answer_p2});
 }
 
 fn parseInput(ally: std.mem.Allocator, buffer: []const u8, size_hint: usize) ![][]const u8 {
@@ -51,7 +54,6 @@ fn findXmas(grid: [][]const u8) usize {
     var count: usize = 0;
     if (grid.len == 0) return 0;
     for (0..grid.len) |row| {
-        // while (row < grid.len) : (row += 1) {
         for (0..grid[0].len) |col| {
             // first we need to find an X
             if (grid[row][col] != 'X') continue;
@@ -89,6 +91,32 @@ fn findXmas(grid: [][]const u8) usize {
     return count;
 }
 
+fn findX_mas(grid: [][]const u8) usize {
+    var count: usize = 0;
+    for (1..grid.len - 1) |row| {
+        col_loop: for (1..grid[0].len - 1) |col| {
+            // first we need to find an A
+            if (grid[row][col] != 'A') continue;
+
+            // the buffer will contain the surrounding characters
+            var buf: [4]u8 = undefined;
+            buf[0] = grid[row - 1][col - 1];
+            buf[1] = grid[row - 1][col + 1];
+            buf[2] = grid[row + 1][col - 1];
+            buf[3] = grid[row + 1][col + 1];
+
+            // check if it matches any of the possible combinations
+            inline for ([_][]const u8{ "MMSS", "SSMM", "MSMS", "SMSM" }) |expected| {
+                if (std.mem.eql(u8, expected, &buf)) {
+                    count += 1;
+                    continue :col_loop;
+                }
+            }
+        }
+    }
+    return count;
+}
+
 test "part 1" {
     const ally = testing.allocator;
     const grid = try parseInput(ally, example, 10);
@@ -98,5 +126,9 @@ test "part 1" {
 }
 
 test "part 2" {
-    return error.SkipZigTest;
+    const ally = testing.allocator;
+    const grid = try parseInput(ally, example, 10);
+    defer ally.free(grid);
+
+    try expectEqual(9, findX_mas(grid));
 }
