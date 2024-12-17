@@ -18,15 +18,20 @@ const Position = struct {
     y: u8,
 };
 
+const PositionSet = std.AutoHashMapUnmanaged(Position, void);
+
+const State = struct { Position, Dir };
+const Seen = std.AutoHashMapUnmanaged(State, void);
+
 const LabMap = struct {
     ally: std.mem.Allocator,
     guard: Position,
     dir: Dir = .up,
-    obstructions: std.AutoHashMapUnmanaged(Position, void),
+    obstructions: PositionSet,
     width: u8,
 
     fn initParse(ally: std.mem.Allocator, s: []const u8) !LabMap {
-        var obstructions = std.AutoHashMapUnmanaged(Position, void){};
+        var obstructions = PositionSet{};
         errdefer obstructions.deinit(ally);
 
         var guard: Position = undefined;
@@ -60,46 +65,102 @@ const LabMap = struct {
     }
 
     fn patrol(self: *LabMap) !usize {
-        // print("patrol started with guard at {d}, {d} and width={d}\n", .{ self.guard.x, self.guard.y, self.width });
-        var visited = std.AutoHashMapUnmanaged(Position, void){};
+        var visited = PositionSet{};
         defer visited.deinit(self.ally);
+
+        // the starting position counts as visited
         try visited.put(self.ally, self.guard, {});
-        while (self.nextPos()) |pos| {
-            // print("guard at: {d}, {d} {s}\n", .{ pos.x, pos.y, @tagName(self.dir) });
-            try visited.put(self.ally, pos, {});
+
+        // we visit each tile keeping track of which positions we've visited before
+        var curr_pos = self.guard;
+        var curr_dir = self.dir;
+        while (next(curr_pos, curr_dir, self.width, self.obstructions)) |state| {
+            curr_pos, curr_dir = state;
+            try visited.put(self.ally, curr_pos, {});
         }
         return visited.count();
     }
 
-    fn nextPos(self: *LabMap) ?Position {
-        const next_pos: Position, const next_dir: Dir = switch (self.dir) {
+    fn trapPatrol(self: *LabMap) !usize {
+        var seen = Seen{};
+        defer seen.deinit(self.ally);
+
+        // the starting position counts as seen
+        try seen.put(self.ally, .{ self.guard, self.dir }, {});
+
+        // used to keep track of which positions we placed an obstruction that wasn't already there
+        var loop_checked = PositionSet{};
+        defer loop_checked.deinit(self.ally);
+
+        // we visit each tile keeping track of which positions we've seen before
+        var count: usize = 0;
+        var curr_pos = self.guard;
+        var curr_dir = self.dir;
+        while (next(curr_pos, curr_dir, self.width, self.obstructions)) |state| {
+            const next_pos, _ = state;
+
+            // if we didn't check this position before, we check if placing an obstruction creates a loop
+            const gop = try loop_checked.getOrPut(self.ally, next_pos);
+            if (!gop.found_existing and try self.loops(curr_pos, next_pos, curr_dir, seen)) count += 1;
+
+            // keep track of visited tiles and direction
+            try seen.put(self.ally, state, {});
+            curr_pos, curr_dir = state;
+        }
+        return count;
+    }
+
+    fn loops(self: *LabMap, curr_pos: Position, next_pos: Position, curr_dir: Dir, seen_so_far: Seen) !bool {
+        // place an obstruction at the guard's next position
+        var tentative_obstructions = try self.obstructions.clone(self.ally);
+        defer tentative_obstructions.deinit(self.ally);
+        try tentative_obstructions.put(self.ally, next_pos, {});
+
+        // create a new set of seen tiles
+        var seen = try seen_so_far.clone(self.ally);
+        defer seen.deinit(self.ally);
+
+        // we visit each tile from the current position and if a loop is detected, we return
+        var tentative_pos = curr_pos;
+        var tentative_dir = curr_dir;
+        while (next(tentative_pos, tentative_dir, self.width, tentative_obstructions)) |state| {
+            tentative_pos, tentative_dir = state;
+            if (try seen.fetchPut(self.ally, .{ tentative_pos, tentative_dir }, {})) |_| {
+                return true;
+            }
+        }
+
+        // guard's left the lab, so no loop
+        return false;
+    }
+
+    fn next(curr: Position, dir: Dir, width: u8, obstructions: PositionSet) ?State {
+        const next_pos: Position, const next_dir: Dir = switch (dir) {
             .up => blk: {
-                if (self.guard.y == 0) return null;
-                const pos: Position = .{ .x = self.guard.x, .y = self.guard.y - 1 };
+                if (curr.y == 0) return null;
+                const pos: Position = .{ .x = curr.x, .y = curr.y - 1 };
                 break :blk .{ pos, .right };
             },
             .right => blk: {
-                if (self.guard.x == self.width) return null;
-                const pos: Position = .{ .x = self.guard.x + 1, .y = self.guard.y };
+                if (curr.x == width) return null;
+                const pos: Position = .{ .x = curr.x + 1, .y = curr.y };
                 break :blk .{ pos, .down };
             },
             .down => blk: {
-                if (self.guard.y == self.width - 1) return null;
-                const pos: Position = .{ .x = self.guard.x, .y = self.guard.y + 1 };
+                if (curr.y == width - 1) return null;
+                const pos: Position = .{ .x = curr.x, .y = curr.y + 1 };
                 break :blk .{ pos, .left };
             },
             .left => blk: {
-                if (self.guard.x == 0) return null;
-                const pos: Position = .{ .x = self.guard.x - 1, .y = self.guard.y };
+                if (curr.x == 0) return null;
+                const pos: Position = .{ .x = curr.x - 1, .y = curr.y };
                 break :blk .{ pos, .up };
             },
         };
-        if (self.obstructions.contains(next_pos)) {
-            self.dir = next_dir;
-            return self.nextPos();
+        if (obstructions.contains(next_pos)) {
+            return next(curr, next_dir, width, obstructions);
         }
-        self.guard = next_pos;
-        return self.guard;
+        return .{ next_pos, dir };
     }
 };
 
@@ -127,8 +188,11 @@ pub fn main() !void {
     var labmap = try LabMap.initParse(ally, input);
     defer labmap.deinit();
 
-    const answer = try labmap.patrol();
-    try stdout.print("Part 1: {d}\n", .{answer});
+    const answer_p1 = try labmap.patrol();
+    try stdout.print("Part 1: {d}\n", .{answer_p1});
+
+    const answer_p2 = try labmap.trapPatrol();
+    try stdout.print("Part 2: {d}\n", .{answer_p2});
 }
 
 test "part 1" {
@@ -139,5 +203,8 @@ test "part 1" {
 }
 
 test "part 2" {
-    return error.SkipZigTest;
+    var labmap = try LabMap.initParse(testing.allocator, example);
+    defer labmap.deinit();
+    const answer = try labmap.trapPatrol();
+    return expectEqual(6, answer);
 }
