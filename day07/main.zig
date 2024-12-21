@@ -1,20 +1,137 @@
 const std = @import("std");
 const print = std.debug.print;
-const assert = std.debug.assert;
+const panic = std.debug.panic;
 const testing = std.testing;
 const expectEqual = std.testing.expectEqual;
+const Allocator = std.mem.Allocator;
+const pow = std.math.pow;
+const divExact = std.math.divExact;
+const example = @embedFile("example.txt");
+
+const Calibration = struct {
+    ally: Allocator,
+    equations: []Equation,
+
+    fn initParse(ally: Allocator, reader: anytype) !Calibration {
+        var array = try std.ArrayListUnmanaged(Equation).initCapacity(ally, 10);
+        defer array.deinit(ally);
+
+        var buf: [50]u8 = undefined;
+        while (try reader.readUntilDelimiterOrEof(&buf, '\n')) |line| {
+            if (line.len == 0) continue;
+            const eq = try Equation.initParse(ally, line);
+            try array.append(ally, eq);
+        }
+        return .{ .ally = ally, .equations = try array.toOwnedSlice(ally) };
+    }
+
+    fn deinit(self: Calibration) void {
+        for (self.equations) |*eq| eq.deinit();
+        self.ally.free(self.equations);
+    }
+
+    fn totalCalibrationResult(self: Calibration) !u64 {
+        var sum: u64 = 0;
+        for (self.equations) |*eq| {
+            sum += try eq.repair();
+        }
+        return sum;
+    }
+};
+
+const Equation = struct {
+    ally: Allocator,
+    testValue: u64,
+    numbers: []u64,
+
+    fn initParse(ally: Allocator, buffer: []const u8) !Equation {
+        var array = try std.ArrayListUnmanaged(u64).initCapacity(ally, 10);
+        defer array.deinit(ally);
+
+        const colon_idx = std.mem.indexOfScalarPos(u8, buffer, 1, ':').?;
+        const testValue = try std.fmt.parseInt(u64, buffer[0..colon_idx], 10);
+        var it = std.mem.splitScalar(u8, buffer[colon_idx + 2 ..], ' ');
+        while (it.next()) |tok| {
+            const number = try std.fmt.parseInt(u64, tok, 10);
+            try array.append(ally, number);
+        }
+
+        const numbers = try array.toOwnedSlice(ally);
+        return .{ .ally = ally, .testValue = testValue, .numbers = numbers };
+    }
+
+    fn deinit(self: *Equation) void {
+        self.ally.free(self.numbers);
+    }
+
+    fn repair(self: *Equation) !u64 {
+        const ally = self.ally;
+        const State = struct { testValue: u64, slide: usize };
+        var stack = try std.ArrayListUnmanaged(State).initCapacity(ally, pow(usize, 2, self.numbers.len));
+        defer stack.deinit(self.ally);
+
+        // print("repairing equation: {d}: {any}\n", .{ self.testValue, self.numbers });
+
+        stack.appendAssumeCapacity(.{ .testValue = self.testValue, .slide = self.numbers.len - 1 });
+        return while (stack.items.len > 0) {
+            // take the last item from the stack
+            const state = stack.swapRemove(stack.items.len - 1);
+            const n = self.numbers[state.slide];
+            // print("state: {any} n: {d}\n", .{ state, n });
+
+            // if the equation can be solved by comparing n to the testValue in the last step,
+            // we return the testValue of the whole equation
+            if (state.slide == 0) {
+                if (n == state.testValue) break self.testValue;
+                continue;
+            }
+
+            // if the testValue is divisible by n, we can attempt multiplication
+            if (state.testValue % n == 0 and n > 0) {
+                const testValue = try divExact(u64, state.testValue, n);
+                stack.appendAssumeCapacity(.{ .testValue = testValue, .slide = state.slide - 1 });
+            }
+
+            // if the testValue is still greater than or equal n, we can attempt addition
+            if (state.testValue >= n) {
+                const testValue = state.testValue - n;
+                stack.appendAssumeCapacity(.{ .testValue = testValue, .slide = state.slide - 1 });
+            }
+        } else 0; // couldn't solve the equation
+    }
+};
 
 pub fn main() !void {
     const stdout_file = std.io.getStdOut().writer();
     var bw = std.io.bufferedWriter(stdout_file);
     defer bw.flush() catch {}; // don't forget to flush!
-
     const stdout = bw.writer();
-    try stdout.print("All your {s} are belong to us.\n", .{"codebase"});
+
+    var input_file = std.fs.cwd().openFile("day07/input.txt", .{ .mode = .read_only }) catch |err| {
+        switch (err) {
+            error.FileNotFound => @panic("Input file is missing"),
+            else => panic("{any}", .{err}),
+        }
+    };
+    defer input_file.close();
+
+    var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
+    defer if (gpa.deinit() == .leak) @panic("Memory leak");
+    const ally = gpa.allocator();
+
+    // const reader = std.io.bufferedReader(input_file.reader());
+    const calibration = try Calibration.initParse(ally, input_file.reader());
+    defer calibration.deinit();
+
+    const answer_p1 = try calibration.totalCalibrationResult();
+    try stdout.print("Part 1: {d}\n", .{answer_p1});
 }
 
 test "part 1" {
-    return error.SkipZigTest;
+    var fbs = std.io.fixedBufferStream(example);
+    const calibration = try Calibration.initParse(testing.allocator, fbs.reader());
+    defer calibration.deinit();
+    try expectEqual(3749, try calibration.totalCalibrationResult());
 }
 
 test "part 2" {
