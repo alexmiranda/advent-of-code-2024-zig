@@ -8,6 +8,14 @@ const pow = std.math.pow;
 const divExact = std.math.divExact;
 const example = @embedFile("example.txt");
 
+const Operator = enum(u8) {
+    add = 1,
+    mul = 2,
+    concat = 4,
+};
+
+const Operators = std.EnumSet(Operator);
+
 const Calibration = struct {
     ally: Allocator,
     equations: []Equation,
@@ -30,10 +38,10 @@ const Calibration = struct {
         self.ally.free(self.equations);
     }
 
-    fn totalCalibrationResult(self: Calibration) !u64 {
+    fn totalCalibrationResult(self: Calibration, ops: Operators) !u64 {
         var sum: u64 = 0;
         for (self.equations) |*eq| {
-            sum += try eq.repair();
+            sum += try eq.repair(ops);
         }
         return sum;
     }
@@ -64,10 +72,10 @@ const Equation = struct {
         self.ally.free(self.numbers);
     }
 
-    fn repair(self: *Equation) !u64 {
+    fn repair(self: *Equation, ops: Operators) !u64 {
         const ally = self.ally;
         const State = struct { testValue: u64, slide: usize };
-        var stack = try std.ArrayListUnmanaged(State).initCapacity(ally, pow(usize, 2, self.numbers.len));
+        var stack = try std.ArrayListUnmanaged(State).initCapacity(ally, pow(usize, ops.count(), self.numbers.len));
         defer stack.deinit(self.ally);
 
         // print("repairing equation: {d}: {any}\n", .{ self.testValue, self.numbers });
@@ -87,14 +95,22 @@ const Equation = struct {
             }
 
             // if the testValue is divisible by n, we can attempt multiplication
-            if (state.testValue % n == 0 and n > 0) {
+            if (ops.contains(.mul) and state.testValue % n == 0 and n > 0) {
                 const testValue = try divExact(u64, state.testValue, n);
                 stack.appendAssumeCapacity(.{ .testValue = testValue, .slide = state.slide - 1 });
             }
 
             // if the testValue is still greater than or equal n, we can attempt addition
-            if (state.testValue >= n) {
+            if (ops.contains(.add) and state.testValue >= n) {
                 const testValue = state.testValue - n;
+                stack.appendAssumeCapacity(.{ .testValue = testValue, .slide = state.slide - 1 });
+            }
+
+            // if the testValue ends with n, we can attempt concatenation
+            const log10n = std.math.log10_int(n);
+            // print("test: {d}\n", .{state.testValue % pow(u64, 10, (log10n + 1))});
+            if (ops.contains(.concat) and state.testValue % pow(u64, 10, log10n + 1) == n) {
+                const testValue = (state.testValue - n) / pow(u64, 10, log10n + 1);
                 stack.appendAssumeCapacity(.{ .testValue = testValue, .slide = state.slide - 1 });
             }
         } else 0; // couldn't solve the equation
@@ -123,17 +139,27 @@ pub fn main() !void {
     const calibration = try Calibration.initParse(ally, input_file.reader());
     defer calibration.deinit();
 
-    const answer_p1 = try calibration.totalCalibrationResult();
+    const ops_p1 = Operators.initMany(&[_]Operator{ .add, .mul });
+    const answer_p1 = try calibration.totalCalibrationResult(ops_p1);
     try stdout.print("Part 1: {d}\n", .{answer_p1});
+
+    const ops_p2 = Operators.initFull();
+    const answer_p2 = try calibration.totalCalibrationResult(ops_p2);
+    try stdout.print("Part 2: {d}\n", .{answer_p2});
 }
 
 test "part 1" {
     var fbs = std.io.fixedBufferStream(example);
     const calibration = try Calibration.initParse(testing.allocator, fbs.reader());
     defer calibration.deinit();
-    try expectEqual(3749, try calibration.totalCalibrationResult());
+    const ops = Operators.initMany(&[_]Operator{ .add, .mul });
+    try expectEqual(3749, try calibration.totalCalibrationResult(ops));
 }
 
 test "part 2" {
-    return error.SkipZigTest;
+    var fbs = std.io.fixedBufferStream(example);
+    const calibration = try Calibration.initParse(testing.allocator, fbs.reader());
+    defer calibration.deinit();
+    const ops = Operators.initFull();
+    try expectEqual(11387, try calibration.totalCalibrationResult(ops));
 }
