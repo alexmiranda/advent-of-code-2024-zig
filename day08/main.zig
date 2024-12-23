@@ -5,6 +5,7 @@ const assert = std.debug.assert;
 const testing = std.testing;
 const expectEqual = std.testing.expectEqual;
 const example = @embedFile("example.txt");
+const example2 = @embedFile("example2.txt");
 
 fn Grid(comptime width: usize) type {
     const Coord = struct { row: isize, col: isize };
@@ -64,7 +65,7 @@ fn Grid(comptime width: usize) type {
                         const delta_row = lhs.row - rhs.row;
                         const delta_col = lhs.col - rhs.col;
                         const antinode: Coord = .{ .row = lhs.row + delta_row, .col = lhs.col + delta_col };
-                        try addIfWithinBounds(antinode, &antinodes);
+                        _ = try addIfWithinBounds(antinode, &antinodes);
                     }
                 }
             }
@@ -72,10 +73,35 @@ fn Grid(comptime width: usize) type {
             return antinodes.count();
         }
 
-        fn addIfWithinBounds(coord: Coord, set: *std.AutoHashMap(Coord, void)) !void {
-            if (coord.row < 0 or coord.row >= width) return;
-            if (coord.col < 0 or coord.col >= width) return;
+        fn countAntinodesRevised(self: *@This()) !u64 {
+            var antinodes = std.AutoHashMap(Coord, void).init(self.ally);
+            defer antinodes.deinit();
+
+            for (self.antennas) |antennas| {
+                const coords = antennas orelse continue;
+                if (coords.items.len < 2) continue;
+                for (coords.items, 0..) |lhs, i| {
+                    for (coords.items, 0..) |rhs, j| {
+                        if (i == j) continue;
+                        const delta_row = lhs.row - rhs.row;
+                        const delta_col = lhs.col - rhs.col;
+                        // var antinode: Coord = .{ .row = lhs.row + delta_row, .col = lhs.col + delta_col };
+                        var antinode: Coord = .{ .row = lhs.row, .col = lhs.col };
+                        while (try addIfWithinBounds(antinode, &antinodes)) {
+                            antinode = .{ .row = antinode.row + delta_row, .col = antinode.col + delta_col };
+                        }
+                    }
+                }
+            }
+
+            return antinodes.count();
+        }
+
+        fn addIfWithinBounds(coord: Coord, set: *std.AutoHashMap(Coord, void)) !bool {
+            if (coord.row < 0 or coord.row >= width) return false;
+            if (coord.col < 0 or coord.col >= width) return false;
             try set.put(coord, {});
+            return true;
         }
     };
 }
@@ -104,6 +130,9 @@ pub fn main() !void {
 
     const answer_p1 = try grid.countAntinodes();
     try stdout.print("Part 1: {d}\n", .{answer_p1});
+
+    const answer_p2 = try grid.countAntinodesRevised();
+    try stdout.print("Part 2: {d}\n", .{answer_p2});
 }
 
 test "part 1" {
@@ -114,5 +143,15 @@ test "part 1" {
 }
 
 test "part 2" {
-    return error.SkipZigTest;
+    var fbs = std.io.fixedBufferStream(example);
+    var grid = try Grid(12).initParse(testing.allocator, fbs.reader());
+    defer grid.deinit();
+    try expectEqual(34, grid.countAntinodesRevised());
+}
+
+test "part 2 - example 2" {
+    var fbs = std.io.fixedBufferStream(example2);
+    var grid = try Grid(10).initParse(testing.allocator, fbs.reader());
+    defer grid.deinit();
+    try expectEqual(9, grid.countAntinodesRevised());
 }
