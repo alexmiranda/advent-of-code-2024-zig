@@ -10,7 +10,7 @@ const swap = std.mem.swap;
 const example = @embedFile("example.txt");
 
 const Segment = union(enum) {
-    free: packed struct { pos: u64, len: u8, _id: u64 = 0 },
+    free: packed struct { pos: u64, len: u8 },
     file: packed struct { pos: u64, len: u8, id: u64 },
 };
 
@@ -51,12 +51,12 @@ const Disk = struct {
     }
 
     fn compact(self: *Disk) !u64 {
-        const segments = self.segments.items;
+        var segments = self.segments.items;
         var left: usize = 1;
         var right: usize = self.segments.items.len - 1;
         outer: while (left < right) {
             // find the first available free space
-            const free = inner: while (left < right) : (left += 1) {
+            var free = inner: while (left < right) : (left += 1) {
                 switch (segments[left]) {
                     .free => |*data| break data,
                     .file => continue :inner,
@@ -64,7 +64,7 @@ const Disk = struct {
             } else break :outer;
 
             // find the right-most file
-            const file = inner: while (right > left) : (right -= 1) {
+            var file = inner: while (right > left) : (right -= 1) {
                 switch (segments[right]) {
                     .file => |*data| break data,
                     .free => continue :inner,
@@ -93,20 +93,81 @@ const Disk = struct {
             left += 1;
         }
 
-        var checksum: usize = 0;
+        // print("{any}\n", .{self});
+        return checksum(segments);
+    }
+
+    fn compactNoFragmentation(self: *Disk) !u64 {
+        var seen = std.AutoHashMapUnmanaged(u64, void){};
+        defer seen.deinit(self.ally);
+
+        var segments = self.segments.items;
+        var slide = self.segments.items.len - 1;
+        outer: while (slide > 0) : (slide -= 1) {
+            var file = switch (segments[slide]) {
+                .file => |*data| data,
+                .free => continue :outer,
+            };
+
+            // ensure that we don't try to move the same file twice... even though it wouldn't be possible
+            // if (try seen.fetchPut(self.ally, file.id, {})) |_| {
+            //     continue :outer;
+            // }
+
+            for (segments[1..slide], 1..) |*segment, i| {
+                var free = switch (segment.*) {
+                    .free => |*data| data,
+                    .file => continue,
+                };
+
+                if (free.len >= file.len) {
+                    const delta = free.len - file.len;
+                    free.len = file.len;
+
+                    // swap positions
+                    swap(Segment, &segments[i], &segments[slide]);
+                    free.pos, file.pos = .{ file.pos, free.pos };
+
+                    // add remaining free space
+                    if (delta > 0) {
+                        try self.segments.insert(i + 1, .{ .free = .{ .pos = file.pos + file.len, .len = delta } });
+                        slide += 1;
+                    }
+                    continue :outer;
+                }
+            }
+        }
+
+        // print("{any}\n", .{self});
+        return checksum(segments);
+    }
+
+    fn checksum(segments: []Segment) u64 {
+        var sum: u64 = 0;
         for (segments) |segment| {
-            checksum += switch (segment) {
-                .free => 0,
-                .file => |data| blk: {
-                    var sum: usize = 0;
+            switch (segment) {
+                .free => {},
+                .file => |data| {
                     for (data.pos..data.pos + data.len) |i| {
                         sum += i * data.id;
                     }
-                    break :blk sum;
                 },
-            };
+            }
         }
-        return checksum;
+        return sum;
+    }
+
+    pub fn format(self: *Disk, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
+        for (self.segments.items) |segment| {
+            switch (segment) {
+                .file => |data| {
+                    for (0..data.len) |_| try w.print("{d}", .{data.id});
+                },
+                .free => |data| {
+                    for (0..data.len) |_| try w.writeByte('.');
+                },
+            }
+        }
     }
 };
 
@@ -131,11 +192,23 @@ pub fn main() !void {
     const input = try input_file.readToEndAlloc(ally, 20001);
     defer ally.free(input);
 
-    var disk = try Disk.initParse(ally, input);
-    defer disk.deinit();
-    const answer_p1 = try disk.compact();
+    // part 1
+    {
+        var disk = try Disk.initParse(ally, input);
+        defer disk.deinit();
 
-    try stdout.print("Part 1: {d}\n", .{answer_p1});
+        const answer_p1 = try disk.compact();
+        try stdout.print("Part 1: {d}\n", .{answer_p1});
+    }
+
+    // part 2
+    {
+        var disk = try Disk.initParse(ally, input);
+        defer disk.deinit();
+
+        const answer_p2 = try disk.compactNoFragmentation();
+        try stdout.print("Part 2: {d}\n", .{answer_p2});
+    }
 }
 
 test "part 1" {
@@ -146,5 +219,9 @@ test "part 1" {
 }
 
 test "part 2" {
-    return error.SkipZigTest;
+    var disk = try Disk.initParse(testing.allocator, example);
+    defer disk.deinit();
+    const checksum = try disk.compactNoFragmentation();
+    _ = checksum;
+    // try expectEqual(2858, checksum);
 }
