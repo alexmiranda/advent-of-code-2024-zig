@@ -21,38 +21,75 @@ fn parseInput(ally: std.mem.Allocator, reader: anytype) ![]u64 {
     return try list.toOwnedSlice();
 }
 
-fn blink(ally: std.mem.Allocator, stones: []u64, comptime n: usize) !usize {
-    const max_capacity = stones.len * std.math.pow(usize, 2, n);
-    var list = try std.ArrayList(u64).initCapacity(ally, max_capacity);
-    defer list.deinit();
+fn blink(ally: std.mem.Allocator, list: []u64, comptime n: usize) !usize {
+    var stones = std.AutoHashMap(u64, usize).init(ally);
+    defer stones.deinit();
 
-    list.appendSliceAssumeCapacity(stones);
-    // print("{any}\n", .{list.items});
+    // initialise the map of all stones: stone => count
+    for (list) |stone| {
+        const gop = try stones.getOrPut(stone);
+        gop.value_ptr.* = if (gop.found_existing) gop.value_ptr.* + 1 else 1;
+    }
+
+    // repeat n times
     for (0..n) |_| {
-        const len = list.items.len;
-        for (list.items[0..len], 0..) |stone, i| {
-            if (stone == 0) {
-                list.items[i] = 1;
-                // print("1. was: 0 is: 1\n", .{});
+        // copy all the values from stones to current and set the map to an empty state
+        var curr = stones.move();
+        defer curr.clearAndFree();
+
+        // iterate over all current stones
+        var it = curr.iterator();
+        while (it.next()) |kv| {
+            const key = kv.key_ptr.*;
+            const val = kv.value_ptr.*;
+
+            // rule 1: If the stone is engraved with the number 0, it is replaced by a stone engraved with the number 1
+            if (key == 0) {
+                const gop = try stones.getOrPut(1);
+                gop.value_ptr.* = (if (gop.found_existing) gop.value_ptr.* else 0) + val;
                 continue;
             }
 
-            const digits = std.math.log10_int(stone) + 1;
+            // check how many digits there are in the stone's number
+            const digits = std.math.log10_int(key) + 1;
             if (digits & 1 == 0) {
-                const x = std.math.pow(u64, 10, digits / 2);
-                const right: u64 = stone % x;
-                const left: u64 = (stone - right) / x;
-                // print("2. was: {d} is: ({d}, {d})\n", .{ stone, left, right });
-                list.items[i] = left;
-                try list.append(right);
+                // rule 2: If the stone is engraved with a number that has an even number of digits, it is replaced by
+                // two stones. The left half of the digits are engraved on the new left stone, and the right half of
+                // the digits are engraved on the new right stone
+                inline for (split(key)) |split_val| {
+                    const gop = try stones.getOrPut(split_val);
+                    gop.value_ptr.* = (if (gop.found_existing) gop.value_ptr.* else 0) + val;
+                }
             } else {
-                // print("3. was: {d} is: {d}\n", .{ stone, stone * 2024 });
-                list.items[i] = stone * 2024;
+                // rule 3: If none of the other rules apply, the stone is replaced by a new stone; the old stone's
+                // number multiplied by 2024 is engraved on the new stone
+                const next_val = key * 2024;
+                const gop = try stones.getOrPut(next_val);
+                gop.value_ptr.* = (if (gop.found_existing) gop.value_ptr.* else 0) + val;
             }
         }
-        // print("{any}\n", .{list.items});
     }
-    return list.items.len;
+
+    // sum up all the stones
+    var count: usize = 0;
+    var values = stones.valueIterator();
+    while (values.next()) |val| count += val.*;
+    return count;
+}
+
+fn split(stone: u64) struct { u64, u64 } {
+    const digits = std.math.log10_int(stone) + 1;
+    assert(digits & 1 == 0);
+    const x = std.math.pow(u64, 10, digits / 2);
+    const right: u64 = stone % x;
+    const left: u64 = (stone - right) / x;
+    return .{ left, right };
+}
+
+test split {
+    try std.testing.expectEqualSlices(u64, &[_]u64{ 1, 0 }, &split(10));
+    try std.testing.expectEqualSlices(u64, &[_]u64{ 9, 9 }, &split(99));
+    try std.testing.expectEqualSlices(u64, &[_]u64{ 20, 24 }, &split(2024));
 }
 
 pub fn main() !void {
@@ -79,6 +116,9 @@ pub fn main() !void {
 
     const answer_p1 = try blink(ally, input, 25);
     try stdout.print("Part 1: {d}\n", .{answer_p1});
+
+    const answer_p2 = try blink(ally, input, 75);
+    try stdout.print("Part 2: {d}\n", .{answer_p2});
 }
 
 test "part 1 - example 1" {
@@ -95,8 +135,4 @@ test "part 1 - example 2" {
     defer testing.allocator.free(input);
     try expectEqual(22, blink(testing.allocator, input, 6));
     try expectEqual(55312, blink(testing.allocator, input, 25));
-}
-
-test "part 2" {
-    return error.SkipZigTest;
 }
