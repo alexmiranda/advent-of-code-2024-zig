@@ -23,7 +23,7 @@ const Map = struct {
         end: Position,
     };
 
-    const Seen = std.AutoHashMap(Trailhead, void);
+    const Seen = std.AutoHashMap(Trailhead, usize);
 
     fn initParse(ally: std.mem.Allocator, buffer: []const u8) !Map {
         var grid = std.ArrayListUnmanaged([]const u8){};
@@ -49,7 +49,6 @@ const Map = struct {
     }
 
     fn totalScore(self: *Map) !usize {
-        // for (self.grid) |row| print("{s}\n", .{row});
         var seen = Seen.init(self.ally);
         defer seen.deinit();
         for (self.grid, 0..) |row, row_index| {
@@ -63,10 +62,30 @@ const Map = struct {
         return seen.count();
     }
 
+    fn totalRating(self: *Map) !usize {
+        var seen = Seen.init(self.ally);
+        defer seen.deinit();
+        for (self.grid, 0..) |row, row_index| {
+            for (row, 0..) |col, col_index| {
+                if (col == '0') {
+                    const start: Position = .{ .row = row_index, .col = col_index };
+                    try self.countTrailheads(start, start, &seen);
+                }
+            }
+        }
+        var total_rating: usize = 0;
+        var it = seen.iterator();
+        while (it.next()) |kv| {
+            total_rating += kv.value_ptr.*;
+        }
+        return total_rating;
+    }
+
     fn countTrailheads(self: Map, start: Position, curr: Position, seen: *Seen) !void {
         const curr_val = self.grid[curr.row][curr.col];
         if (curr_val == '9') {
-            try seen.put(.{ .start = start, .end = curr }, {});
+            const gop = try seen.getOrPut(.{ .start = start, .end = curr });
+            gop.value_ptr.* = if (gop.found_existing) gop.value_ptr.* + 1 else 1;
             return;
         }
 
@@ -130,6 +149,9 @@ pub fn main() !void {
 
     const answer_p1 = try map.totalScore();
     try stdout.print("Part 1: {d}\n", .{answer_p1});
+
+    const answer_p2 = try map.totalRating();
+    try stdout.print("Part 2: {d}\n", .{answer_p2});
 }
 
 test "part 1 - example 1" {
@@ -147,5 +169,8 @@ test "part 1 - example 2" {
 }
 
 test "part 2" {
-    return error.SkipZigTest;
+    var map = try Map.initParse(testing.allocator, example2);
+    defer map.deinit();
+    const rating = try map.totalRating();
+    try expectEqual(81, rating);
 }
