@@ -72,13 +72,14 @@ const ClawMachine = struct {
     /// ay * py - ay * (bx * m) = ax * py - ax (by * m)
     ///
     /// m = ((ax * py) - (ay * px)) / ((ax * by) - (ay * bx)
-<<<<<<< HEAD
-    fn solve(self: @This()) ?u64 {
-        const m = @divFloor((self.ax * self.py) - (self.ay * self.px), (self.ax * self.by) - (self.ay * self.bx));
-        const n = @divFloor(self.px - (self.bx * m), self.ax);
+    fn solve(self: @This(), limit: u64, offset: i64) ?u64 {
+        const px = self.px + offset;
+        const py = self.py + offset;
+        const m = @divFloor((self.ax * py) - (self.ay * px), (self.ax * self.by) - (self.ay * self.bx));
+        const n = @divFloor(px - (self.bx * m), self.ax);
         // we can only push each button a maximum of 100 times
-        if (n > 100 or m > 100) return null;
-        if ((self.ax * n) + (self.bx * m) == self.px and (self.ay * n) + (self.by * m) == self.py) {
+        if (n > limit or m > limit) return null;
+        if ((self.ax * n) + (self.bx * m) == px and (self.ay * n) + (self.by * m) == py) {
             return @as(u64, @bitCast(3 * n + m));
         }
         return null; // ∞ INFINITE
@@ -102,13 +103,16 @@ pub fn main() !void {
 
     var br = std.io.bufferedReader(input_file.reader());
     const reader = br.reader();
-    var tokens: u64 = 0;
+    var answer_p1: u64 = 0;
+    var answer_p2: u64 = 0;
     while (try ClawMachine.initReader(reader)) |mach| {
         // print("{?}\n", .{mach});
-        if (mach.solve()) |n| tokens += n;
+        if (mach.solve(100, 0)) |n| answer_p1 += n;
+        if (mach.solve(std.math.maxInt(u64), 10000000000000)) |n| answer_p2 += n;
     }
 
-    try stdout.print("Part 1: {d}\n", .{tokens});
+    try stdout.print("Part 1: {d}\n", .{answer_p1});
+    try stdout.print("Part 2: {d}\n", .{answer_p2});
 }
 
 test "part 1" {
@@ -117,11 +121,18 @@ test "part 1" {
     var tokens: u64 = 0;
     while (try ClawMachine.initReader(reader)) |mach| {
         // print("{?}\n", .{mach});
-        if (mach.solve()) |n| tokens += n;
+        if (mach.solve(100, 0)) |n| tokens += n;
     }
     try expectEqual(480, tokens);
 }
 
 test "part 2" {
-    return error.SkipZigTest;
+    var fbs = std.io.fixedBufferStream(example);
+    const reader = fbs.reader();
+    var tokens: u64 = 0;
+    while (try ClawMachine.initReader(reader)) |mach| {
+        // print("{?}\n", .{mach});
+        if (mach.solve(std.math.maxInt(u64), 10_000_000_000_000)) |n| tokens += n;
+    }
+    try expectEqual(875318608908, tokens);
 }
