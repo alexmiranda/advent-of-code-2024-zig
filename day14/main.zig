@@ -169,7 +169,8 @@ pub fn main() !void {
         };
         defer input_file.close();
 
-        const input = try input_file.readToEndAlloc(ally, 8324);
+        const size_hint = comptime std.math.ceilPowerOfTwo(usize, 8324) catch unreachable;
+        const input = try input_file.readToEndAllocOptions(ally, 8324, size_hint, @alignOf(u8), null);
         defer ally.free(input);
 
         break :blk try Bathroom(101, 103).initParse(ally, input);
