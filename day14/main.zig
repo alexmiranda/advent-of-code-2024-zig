@@ -80,14 +80,13 @@ fn Bathroom(comptime width: i32, comptime height: i32) type {
             return @reduce(.Mul, quadrants);
         }
 
-        fn simulate(self: *Self, writer: anytype) !void {
+        fn simulate(self: *Self, writer: anytype) !usize {
             var robots = self.robots.move();
             defer robots.deinit(self.ally);
-            // try robots.ensureTotalCapacity(self.ally, width * height * 2);
 
             var next = std.AutoHashMapUnmanaged(Robot, void){};
-            defer robots.deinit(self.ally);
-            // try next.ensureTotalCapacity(self.ally, width * height * 2);
+            defer next.deinit(self.ally);
+            try next.ensureTotalCapacity(self.ally, robots.capacity());
 
             for (1..10_000) |n| {
                 var xs: [width]u8 = .{0} ** width;
@@ -113,19 +112,19 @@ fn Bathroom(comptime width: i32, comptime height: i32) type {
                 }
 
                 if (score >= 31 * 4) {
-                    var found: Self = .{ .ally = self.ally, .robots = robots.move() };
-                    defer found.deinit();
                     try writer.print("N={d}\n", .{n});
-                    try writer.print("{?}", .{found});
-                    break;
+                    try printRobots(robots, writer);
+                    return n;
                 }
             }
+
+            unreachable;
         }
 
-        pub fn format(self: Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        fn printRobots(robots: std.AutoHashMapUnmanaged(Robot, void), writer: anytype) !void {
             const size = width * height + height;
             var tiles: [size]u8 = .{'.'} ** size;
-            var iter = self.robots.keyIterator();
+            var iter = robots.keyIterator();
             while (iter.next()) |key_ptr| {
                 const robot = key_ptr.*;
                 const pos: u32 = @bitCast(robot.loc.y * (width + 1) + robot.loc.x);
@@ -142,6 +141,10 @@ fn Bathroom(comptime width: i32, comptime height: i32) type {
                 slide += width + 1;
             }
             try writer.print("{s}", .{tiles});
+        }
+
+        pub fn format(self: Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try printRobots(self.robots, writer);
         }
     };
 }
@@ -175,8 +178,11 @@ pub fn main() !void {
 
     const answer_p1 = bathroom.calculateSafetyFactor();
     try stdout.print("Part 1: {d}\n", .{answer_p1});
+    bw.flush() catch {};
 
-    try bathroom.simulate(stdout);
+    const answer_p2 = try bathroom.simulate(std.io.null_writer);
+    // const answer_p2 = try bathroom.simulate(stdout);
+    try stdout.print("Part 2: {d}\n", .{answer_p2});
 }
 
 test "part 1" {
