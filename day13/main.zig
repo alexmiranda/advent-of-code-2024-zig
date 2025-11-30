@@ -87,25 +87,24 @@ const ClawMachine = struct {
 };
 
 pub fn main() !void {
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    defer bw.flush() catch {}; // don't forget to flush!
-    const stdout = bw.writer();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout = &stdout_writer.interface;
 
     var input_file = std.fs.cwd().openFile("day13/input.txt", .{ .mode = .read_only }) catch |err|
         {
-        switch (err) {
-            error.FileNotFound => @panic("Input file is missing"),
-            else => panic("{any}", .{err}),
-        }
-    };
+            switch (err) {
+                error.FileNotFound => @panic("Input file is missing"),
+                else => panic("{any}", .{err}),
+            }
+        };
     defer input_file.close();
 
-    var br = std.io.bufferedReader(input_file.reader());
-    const reader = br.reader();
+    var read_buffer: [1024]u8 = undefined;
+    var reader = std.fs.File.reader(input_file, &read_buffer);
     var answer_p1: u64 = 0;
     var answer_p2: u64 = 0;
-    while (try ClawMachine.initReader(reader)) |mach| {
+    while (try ClawMachine.initReader(&reader.interface.adaptToOldInterface())) |mach| {
         // print("{?}\n", .{mach});
         if (mach.solve(100, 0)) |n| answer_p1 += n;
         if (mach.solve(std.math.maxInt(u64), 10000000000000)) |n| answer_p2 += n;
@@ -113,6 +112,7 @@ pub fn main() !void {
 
     try stdout.print("Part 1: {d}\n", .{answer_p1});
     try stdout.print("Part 2: {d}\n", .{answer_p2});
+    try stdout.flush();
 }
 
 test "part 1" {

@@ -8,27 +8,28 @@ const example1 = @embedFile("example1.txt");
 const example2 = @embedFile("example2.txt");
 
 pub fn main() !void {
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    defer bw.flush() catch {}; // don't forget to flush!
-    const stdout = bw.writer();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout = &stdout_writer.interface;
 
     const input_file =
-        std.fs.cwd().openFile("day03/input.txt", .{}) catch |err| {
-        switch (err) {
-            error.FileNotFound => panic("Input file is missing", .{}),
-            else => panic("{any}", .{err}),
-        }
-    };
+        std.fs.cwd().openFile("day03/input.txt", .{ .mode = .read_only }) catch |err| {
+            switch (err) {
+                error.FileNotFound => panic("Input file is missing", .{}),
+                else => panic("{any}", .{err}),
+            }
+        };
     defer input_file.close();
 
     var buf: [19813]u8 = undefined;
-    const read = try input_file.readAll(&buf);
-    const answer_p1 = compute(buf[0..read]);
+    var reader = std.fs.File.reader(input_file, &buf);
+    const read = try reader.interface.take(buf.len);
+    const answer_p1 = compute(read);
     try stdout.print("Part 1: {d}\n", .{answer_p1});
 
-    const answer_p2 = computeEnabledOnly(buf[0..read]);
+    const answer_p2 = computeEnabledOnly(read);
     try stdout.print("Part 2: {d}\n", .{answer_p2});
+    try stdout.flush();
 }
 
 fn compute(buffer: []const u8) u32 {

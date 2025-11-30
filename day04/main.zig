@@ -7,25 +7,25 @@ const expectEqual = std.testing.expectEqual;
 const example = @embedFile("example.txt");
 
 pub fn main() !void {
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    defer bw.flush() catch {}; // don't forget to flush!
-    const stdout = bw.writer();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout = &stdout_writer.interface;
 
     const input_file =
         std.fs.cwd().openFile("day04/input.txt", .{ .mode = .read_only }) catch |err| {
-        switch (err) {
-            error.FileNotFound => panic("Input file is missing", .{}),
-            else => panic("{any}", .{err}),
-        }
-    };
+            switch (err) {
+                error.FileNotFound => panic("Input file is missing", .{}),
+                else => panic("{any}", .{err}),
+            }
+        };
     defer input_file.close();
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
+    var gpa: std.heap.GeneralPurposeAllocator(.{ .safety = true }) = .init;
     defer if (gpa.deinit() == .leak) @panic("Memory leak");
     var ally = gpa.allocator();
 
-    const buffer = try input_file.readToEndAlloc(ally, 19741);
+    var reader = std.fs.File.reader(input_file, &.{});
+    const buffer = try reader.interface.readAlloc(ally, 19741);
     defer ally.free(buffer);
 
     const grid = try parseInput(ally, buffer, 140);
@@ -36,18 +36,19 @@ pub fn main() !void {
 
     const answer_p2 = findX_mas(grid);
     try stdout.print("Part 2: {d}\n", .{answer_p2});
+    try stdout.flush();
 }
 
 fn parseInput(ally: std.mem.Allocator, buffer: []const u8, size_hint: usize) ![][]const u8 {
-    var list = try std.ArrayList([]const u8).initCapacity(ally, size_hint);
-    defer list.deinit();
+    var list: std.ArrayList([]const u8) = try .initCapacity(ally, size_hint);
+    defer list.deinit(ally);
 
     var start: usize = 0;
     while (std.mem.indexOfScalarPos(u8, buffer, start, '\n')) |pos| : (start = pos + 1) {
         if (pos - start == 0) break;
-        try list.append(buffer[start..pos]);
+        try list.append(ally, buffer[start..pos]);
     }
-    return list.toOwnedSlice();
+    return list.toOwnedSlice(ally);
 }
 
 fn findXmas(grid: [][]const u8) usize {

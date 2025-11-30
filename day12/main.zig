@@ -21,7 +21,7 @@ const Garden = struct {
     const Region = std.AutoHashMapUnmanaged(Plot, void);
 
     fn initParse(ally: Allocator, buffer: []const u8) !Garden {
-        var plots = Map{};
+        var plots: Map = .empty;
         var row: isize = 0;
         var col: isize = 0;
         for (buffer) |c| {
@@ -276,7 +276,7 @@ const Garden = struct {
         defer candidates.deinit(ally);
 
         // queue of plots to visit
-        var q = std.ArrayListUnmanaged(Plot){};
+        var q: std.ArrayList(Plot) = .empty;
         defer q.deinit(ally);
 
         var inside = false;
@@ -298,7 +298,7 @@ const Garden = struct {
 
                     // bfs
                     try q.append(ally, candidate);
-                    while (q.popOrNull()) |curr| {
+                    while (q.pop()) |curr| {
                         // check if it escapes the box area
                         if (curr.@"0" <= min_row or curr.@"0" >= max_row or curr.@"1" <= min_col or curr.@"1" >= max_col) {
                             q.clearRetainingCapacity();
@@ -351,26 +351,25 @@ const Garden = struct {
 };
 
 pub fn main() !void {
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    defer bw.flush() catch {}; // don't forget to flush!
-
-    const stdout = bw.writer();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout = &stdout_writer.interface;
 
     var input_file = std.fs.cwd().openFile("day12/input.txt", .{ .mode = .read_only }) catch |err|
         {
-        switch (err) {
-            error.FileNotFound => @panic("Input file is missing"),
-            else => panic("{any}", .{err}),
-        }
-    };
+            switch (err) {
+                error.FileNotFound => @panic("Input file is missing"),
+                else => panic("{any}", .{err}),
+            }
+        };
     defer input_file.close();
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
+    var gpa: std.heap.GeneralPurposeAllocator(.{ .safety = true }) = .init;
     defer if (gpa.deinit() == .leak) @panic("Memory leak");
     const ally = gpa.allocator();
 
-    const input = try input_file.readToEndAlloc(ally, 19741);
+    var reader = std.fs.File.reader(input_file, &.{});
+    const input = try reader.interface.readAlloc(ally, 19741);
     defer ally.free(input);
 
     var garden = try Garden.initParse(ally, input);
@@ -381,6 +380,7 @@ pub fn main() !void {
 
     const answer_p2 = try garden.fencingPrice(true);
     try stdout.print("Part 2: {d}\n", .{answer_p2});
+    try stdout.flush();
 }
 
 test "part 1 - example 1" {

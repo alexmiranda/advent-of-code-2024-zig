@@ -31,7 +31,7 @@ const LabMap = struct {
     width: u8,
 
     fn initParse(ally: std.mem.Allocator, s: []const u8) !LabMap {
-        var obstructions = PositionSet{};
+        var obstructions: PositionSet = .empty;
         errdefer obstructions.deinit(ally);
 
         var guard: Position = undefined;
@@ -65,7 +65,7 @@ const LabMap = struct {
     }
 
     fn patrol(self: *LabMap) !usize {
-        var visited = PositionSet{};
+        var visited: PositionSet = .empty;
         defer visited.deinit(self.ally);
 
         // the starting position counts as visited
@@ -89,7 +89,7 @@ const LabMap = struct {
         try seen.put(self.ally, .{ self.guard, self.dir }, {});
 
         // used to keep track of which positions we placed an obstruction that wasn't already there
-        var loop_checked = PositionSet{};
+        var loop_checked: PositionSet = .empty;
         defer loop_checked.deinit(self.ally);
 
         // we visit each tile keeping track of which positions we've seen before
@@ -165,10 +165,9 @@ const LabMap = struct {
 };
 
 pub fn main() !void {
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    defer bw.flush() catch {}; // don't forget to flush!
-    const stdout = bw.writer();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout = &stdout_writer.interface;
 
     var input_file = std.fs.cwd().openFile("day06/input.txt", .{ .mode = .read_only }) catch |err| {
         switch (err) {
@@ -178,11 +177,12 @@ pub fn main() !void {
     };
     defer input_file.close();
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
+    var gpa: std.heap.GeneralPurposeAllocator(.{ .safety = true }) = .init;
     defer if (gpa.deinit() == .leak) @panic("Memory leak");
     const ally = gpa.allocator();
 
-    const input = try input_file.readToEndAlloc(ally, 20000);
+    var reader = std.fs.File.reader(input_file, &.{});
+    const input = try reader.interface.allocRemaining(ally, .limited(20000));
     defer ally.free(input);
 
     var labmap = try LabMap.initParse(ally, input);
@@ -193,6 +193,7 @@ pub fn main() !void {
 
     const answer_p2 = try labmap.trapPatrol();
     try stdout.print("Part 2: {d}\n", .{answer_p2});
+    try stdout.flush();
 }
 
 test "part 1" {

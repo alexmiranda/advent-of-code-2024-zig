@@ -11,95 +11,79 @@ const fmt = std.fmt;
 const example = @embedFile("example.txt");
 
 pub fn main() !void {
-    var gpa = heap.GeneralPurposeAllocator(.{ .safety = true }){};
+    var gpa: heap.GeneralPurposeAllocator(.{ .safety = true }) = .init;
     defer if (gpa.deinit() == .leak) panic("Memory leak", .{});
     const ally = gpa.allocator();
 
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    defer bw.flush() catch {}; // don't forget to flush!
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout = &stdout_writer.interface;
 
     const path = "day02/input.txt";
-    var input_file = std.fs.cwd().openFile(path, .{}) catch |err|
+    var input_file = std.fs.cwd().openFile(path, .{ .mode = .read_only }) catch |err|
         switch (err) {
-        error.FileNotFound, error.AccessDenied => std.debug.panic("Input file is missing", .{}),
-        else => std.debug.panic("Failed to open file: {s}", .{path}),
-    };
+            error.FileNotFound, error.AccessDenied => panic("Input file is missing", .{}),
+            else => panic("Failed to open file: {s}", .{path}),
+        };
     defer input_file.close();
 
-    const reader = input_file.reader();
-    const part_1 = try countSafeReports(ally, reader, 23);
+    var reader_buffer: [1024]u8 = undefined;
+    var reader = input_file.reader(&reader_buffer);
+    const part_1 = try countSafeReports(ally, &reader.interface, 23);
 
-    try input_file.seekTo(0);
-    const part_2 = try countSafeReportsRevised(ally, reader, 23);
+    try reader.seekTo(0);
+    const part_2 = try countSafeReportsRevised(ally, &reader.interface, 23);
 
-    const stdout = bw.writer();
     try stdout.print("Part 1: {d}\n", .{part_1});
     try stdout.print("Part 2: {d}\n", .{part_2});
+    try stdout.flush();
 }
 
-fn countSafeReports(ally: mem.Allocator, reader: anytype, max_line_length: usize) !usize {
-    var bytes = try std.ArrayList(u8).initCapacity(ally, max_line_length);
-    defer bytes.deinit();
+fn countSafeReports(ally: mem.Allocator, reader: *std.Io.Reader, comptime max_line_length: usize) !usize {
+    var buf: [max_line_length]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
 
-    var levels = try std.ArrayList(u32).initCapacity(ally, 8);
-    defer levels.deinit();
+    var levels: std.ArrayList(u32) = try .initCapacity(ally, 8);
+    defer levels.deinit(ally);
 
     var count: usize = 0;
-    while (true) {
-        defer bytes.clearRetainingCapacity();
+    while (try reader.streamDelimiterEnding(&writer, '\n') > 0) {
+        const line = writer.buffered();
 
-        // first we read from the input line by line
-        reader.streamUntilDelimiter(bytes.writer(), '\n', null) catch |err| {
-            switch (err) {
-                error.EndOfStream => break,
-                else => panic("Error reading input: {any}", .{err}),
-            }
-        };
-        if (bytes.items.len == 0) break;
-        if (bytes.items[0] == '#') continue;
-
-        // and then parse each report
+        // parse each report
         levels.clearRetainingCapacity();
-        var it = mem.tokenizeScalar(u8, bytes.items, ' ');
+        var it = mem.tokenizeScalar(u8, line, ' ');
         while (it.next()) |tok| {
             const n = fmt.parseInt(u32, tok, 10) catch panic("couldn't parse number: {s}", .{tok});
-            levels.appendAssumeCapacity(n);
+            try levels.append(ally, n);
         }
 
         // if the report is safe, we count it
         if (safe(levels.items)) count += 1;
+
+        _ = writer.consumeAll(); // reset writer
+        reader.toss(1); // skip the newline
     }
     return count;
 }
 
-fn countSafeReportsRevised(ally: mem.Allocator, reader: anytype, max_line_length: usize) !usize {
-    var bytes = try std.ArrayList(u8).initCapacity(ally, max_line_length);
-    defer bytes.deinit();
+fn countSafeReportsRevised(ally: mem.Allocator, reader: *std.Io.Reader, comptime max_line_length: usize) !usize {
+    var buf: [max_line_length]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
 
-    var levels = try std.ArrayList(u32).initCapacity(ally, 8);
-    defer levels.deinit();
+    var levels: std.ArrayList(u32) = try .initCapacity(ally, 8);
+    defer levels.deinit(ally);
 
     var count: usize = 0;
-    while (true) {
-        defer bytes.clearRetainingCapacity();
+    while (try reader.streamDelimiterEnding(&writer, '\n') > 0) {
+        const line = writer.buffered();
 
-        // first we read from the input line by line
-        reader.streamUntilDelimiter(bytes.writer(), '\n', null) catch |err| {
-            switch (err) {
-                error.EndOfStream => break,
-                else => panic("Error reading input: {any}", .{err}),
-            }
-        };
-        if (bytes.items.len == 0) break;
-        if (bytes.items[0] == '#') continue;
-
-        // and then parse each report
+        // parse each report
         levels.clearRetainingCapacity();
-        var it = mem.tokenizeScalar(u8, bytes.items, ' ');
+        var it = mem.tokenizeScalar(u8, line, ' ');
         while (it.next()) |tok| {
             const n = fmt.parseInt(u32, tok, 10) catch panic("couldn't parse number: {s}", .{tok});
-            levels.appendAssumeCapacity(n);
+            try levels.append(ally, n);
         }
 
         // if the report is safe, we count it
@@ -115,6 +99,9 @@ fn countSafeReportsRevised(ally: mem.Allocator, reader: anytype, max_line_length
                 }
             }
         }
+
+        _ = writer.consumeAll();
+        reader.toss(1); // skip the newline
     }
     return count;
 }
@@ -142,11 +129,11 @@ fn safe(levels: []u32) bool {
 }
 
 test "part 1" {
-    var fbs = io.fixedBufferStream(example);
-    try expectEqual(2, countSafeReports(testing.allocator, fbs.reader(), 9));
+    var reader = std.Io.Reader.fixed(example);
+    try expectEqual(2, countSafeReports(testing.allocator, &reader, 9));
 }
 
 test "part 2" {
-    var fbs = io.fixedBufferStream(example);
-    try expectEqual(4, countSafeReportsRevised(testing.allocator, fbs.reader(), 9));
+    var reader = std.Io.Reader.fixed(example);
+    try expectEqual(4, countSafeReportsRevised(testing.allocator, &reader, 9));
 }

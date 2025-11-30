@@ -18,7 +18,7 @@ const Warehouse = struct {
     };
 
     fn initReader(ally: std.mem.Allocator, reader: anytype) !Warehouse {
-        var tiles = std.AutoHashMapUnmanaged(i16, Tile){};
+        var tiles: std.AutoHashMapUnmanaged(i16, Tile) = .empty;
         errdefer tiles.deinit(ally);
 
         // read each char until a double new line is found
@@ -46,15 +46,16 @@ const Warehouse = struct {
         }
 
         // read all moves
-        var moves = std.ArrayList(u8).init(ally);
-        defer moves.deinit();
-        try reader.readAllArrayList(&moves, 21000);
+        var moves: std.ArrayList(u8) = .empty;
+        var managed = moves.toManaged(ally);
+        defer managed.deinit();
+        try reader.readAllArrayList(&managed, 21000);
 
         return .{
             .ally = ally,
             .tiles = tiles,
             .robot = robot,
-            .moves = try moves.toOwnedSlice(),
+            .moves = try managed.toOwnedSlice(),
         };
     }
 
@@ -120,37 +121,38 @@ const Warehouse = struct {
 };
 
 pub fn main() !void {
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    defer bw.flush() catch {}; // don't forget to flush!
-    const stdout = bw.writer();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout = &stdout_writer.interface;
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
+    var gpa: std.heap.GeneralPurposeAllocator(.{ .safety = true }) = .init;
     defer if (gpa.deinit() == .leak) @panic("Memory leak");
     const ally = gpa.allocator();
 
     var warehouse = blk: {
         var input_file = std.fs.cwd().openFile("day15/input.txt", .{ .mode = .read_only }) catch |err|
             {
-            switch (err) {
-                error.FileNotFound => @panic("Input file is missing"),
-                else => panic("{any}", .{err}),
-            }
-        };
+                switch (err) {
+                    error.FileNotFound => @panic("Input file is missing"),
+                    else => panic("{any}", .{err}),
+                }
+            };
         defer input_file.close();
 
-        var br = std.io.bufferedReader(input_file.reader());
-        break :blk try Warehouse.initReader(ally, br.reader());
+        var read_buffer: [1024]u8 = undefined;
+        var reader = std.fs.File.reader(input_file, &read_buffer);
+        break :blk try Warehouse.initReader(ally, reader.interface.adaptToOldInterface());
     };
     defer warehouse.deinit();
 
     const answer_p1 = try warehouse.moveAroundUnpredictably();
     try stdout.print("Part 1: {d}\n", .{answer_p1});
+    try stdout.flush();
 }
 
 test "part 1" {
-    var fbs = std.io.fixedBufferStream(example);
-    var warehouse = try Warehouse.initReader(testing.allocator, fbs.reader());
+    var reader: std.Io.Reader = .fixed(example);
+    var warehouse = try Warehouse.initReader(testing.allocator, reader.adaptToOldInterface());
     defer warehouse.deinit();
     const answer = try warehouse.moveAroundUnpredictably();
     try expectEqual(10092, answer);

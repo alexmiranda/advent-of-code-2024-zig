@@ -12,21 +12,20 @@ fn Grid(comptime width: usize) type {
 
     return struct {
         ally: std.mem.Allocator,
-        antennas: [62]?std.ArrayListUnmanaged(Coord),
+        antennas: [62]?std.ArrayList(Coord),
 
-        fn initParse(ally: std.mem.Allocator, reader: anytype) !@This() {
+        fn initParse(ally: std.mem.Allocator, reader: *std.Io.Reader) !@This() {
             var grid: @This() = .{
                 .ally = ally,
-                .antennas = [_]?std.ArrayListUnmanaged(Coord){null} ** 62,
+                .antennas = [_]?std.ArrayList(Coord){null} ** 62,
             };
             errdefer grid.deinit();
 
-            var buf: [width + 1]u8 = undefined;
             var row: isize = 0;
-            while (true) : (row += 1) {
-                const read = try reader.read(&buf);
-                if (read == 0) break;
-                for (buf[0..read], 0..) |tile, col| {
+            while (reader.take(width)) |line| : (row += 1) {
+                if (line.len == 0) break;
+                reader.toss(1); // skip the newline
+                for (line, 0..) |tile, col| {
                     if (tile == '.' or tile == '\n') continue;
                     assert(std.ascii.isAlphanumeric(tile));
                     const i = switch (tile) {
@@ -36,12 +35,15 @@ fn Grid(comptime width: usize) type {
                         else => unreachable,
                     };
                     grid.antennas[i] = blk: {
-                        var array = grid.antennas[i] orelse try std.ArrayListUnmanaged(Coord).initCapacity(ally, 2);
+                        var array = grid.antennas[i] orelse try std.ArrayList(Coord).initCapacity(ally, 2);
                         errdefer array.deinit(ally);
                         try array.append(ally, .{ .row = row, .col = @intCast(col) });
                         break :blk array;
                     };
                 }
+            } else |err| switch (err) {
+                error.EndOfStream => {},
+                else => return err,
             }
             return grid;
         }
@@ -107,10 +109,9 @@ fn Grid(comptime width: usize) type {
 }
 
 pub fn main() !void {
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    defer bw.flush() catch {}; // don't forget to flush!
-    const stdout = bw.writer();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout = &stdout_writer.interface;
 
     var input_file = std.fs.cwd().openFile("day08/input.txt", .{ .mode = .read_only }) catch |err| {
         switch (err) {
@@ -124,8 +125,9 @@ pub fn main() !void {
     defer if (gpa.deinit() == .leak) @panic("Memory leak");
     const ally = gpa.allocator();
 
-    var br = std.io.bufferedReader(input_file.reader());
-    var grid = try Grid(50).initParse(ally, br.reader());
+    var read_buffer: [1024]u8 = undefined;
+    var reader = std.fs.File.reader(input_file, &read_buffer);
+    var grid = try Grid(50).initParse(ally, &reader.interface);
     defer grid.deinit();
 
     const answer_p1 = try grid.countAntinodes();
@@ -133,25 +135,26 @@ pub fn main() !void {
 
     const answer_p2 = try grid.countAntinodesRevised();
     try stdout.print("Part 2: {d}\n", .{answer_p2});
+    try stdout.flush();
 }
 
 test "part 1" {
-    var fbs = std.io.fixedBufferStream(example);
-    var grid = try Grid(12).initParse(testing.allocator, fbs.reader());
+    var reader: std.Io.Reader = .fixed(example);
+    var grid = try Grid(12).initParse(testing.allocator, &reader);
     defer grid.deinit();
     try expectEqual(14, grid.countAntinodes());
 }
 
 test "part 2" {
-    var fbs = std.io.fixedBufferStream(example);
-    var grid = try Grid(12).initParse(testing.allocator, fbs.reader());
+    var reader: std.Io.Reader = .fixed(example);
+    var grid = try Grid(12).initParse(testing.allocator, &reader);
     defer grid.deinit();
     try expectEqual(34, grid.countAntinodesRevised());
 }
 
 test "part 2 - example 2" {
-    var fbs = std.io.fixedBufferStream(example2);
-    var grid = try Grid(10).initParse(testing.allocator, fbs.reader());
+    var reader: std.Io.Reader = .fixed(example2);
+    var grid = try Grid(10).initParse(testing.allocator, &reader);
     defer grid.deinit();
     try expectEqual(9, grid.countAntinodesRevised());
 }

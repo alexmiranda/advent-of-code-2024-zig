@@ -18,7 +18,7 @@ const Pair = struct {
         return .{ .x = x, .y = y };
     }
 
-    pub fn format(pair: Pair, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(pair: Pair, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         _ = try writer.print("{d},{d}", .{ pair.x, pair.y });
     }
 };
@@ -80,7 +80,7 @@ fn Bathroom(comptime width: i32, comptime height: i32) type {
             return @reduce(.Mul, quadrants);
         }
 
-        fn simulate(self: *Self, writer: anytype) !usize {
+        fn simulate(self: *Self, writer: *std.Io.Writer) !usize {
             var robots = self.robots.move();
             defer robots.deinit(self.ally);
 
@@ -121,7 +121,7 @@ fn Bathroom(comptime width: i32, comptime height: i32) type {
             unreachable;
         }
 
-        fn printRobots(robots: std.AutoHashMapUnmanaged(Robot, void), writer: anytype) !void {
+        fn printRobots(robots: std.AutoHashMapUnmanaged(Robot, void), writer: *std.Io.Writer) std.Io.Writer.Error!void {
             const size = width * height + height;
             var tiles: [size]u8 = .{'.'} ** size;
             var iter = robots.keyIterator();
@@ -143,34 +143,33 @@ fn Bathroom(comptime width: i32, comptime height: i32) type {
             try writer.print("{s}", .{tiles});
         }
 
-        pub fn format(self: Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            try printRobots(self.robots, writer);
+        pub fn format(self: Self, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            return printRobots(self.robots, writer);
         }
     };
 }
 
 pub fn main() !void {
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    defer bw.flush() catch {}; // don't forget to flush!
-    const stdout = bw.writer();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout = &stdout_writer.interface;
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
+    var gpa: std.heap.GeneralPurposeAllocator(.{ .safety = true }) = .init;
     defer if (gpa.deinit() == .leak) @panic("Memory leak");
     const ally = gpa.allocator();
 
     var bathroom = blk: {
         var input_file = std.fs.cwd().openFile("day14/input.txt", .{ .mode = .read_only }) catch |err|
             {
-            switch (err) {
-                error.FileNotFound => @panic("Input file is missing"),
-                else => panic("{any}", .{err}),
-            }
-        };
+                switch (err) {
+                    error.FileNotFound => @panic("Input file is missing"),
+                    else => panic("{any}", .{err}),
+                }
+            };
         defer input_file.close();
 
         const size_hint = comptime std.math.ceilPowerOfTwo(usize, 8324) catch unreachable;
-        const input = try input_file.readToEndAllocOptions(ally, 8324, size_hint, @alignOf(u8), null);
+        const input = try input_file.readToEndAllocOptions(ally, 8324, size_hint, .of(u8), null);
         defer ally.free(input);
 
         break :blk try Bathroom(101, 103).initParse(ally, input);
@@ -179,17 +178,18 @@ pub fn main() !void {
 
     const answer_p1 = bathroom.calculateSafetyFactor();
     try stdout.print("Part 1: {d}\n", .{answer_p1});
-    bw.flush() catch {};
+    try stdout.flush();
 
-    const answer_p2 = try bathroom.simulate(std.io.null_writer);
-    // const answer_p2 = try bathroom.simulate(stdout);
+    var sink: std.Io.Writer.Discarding = .init(&.{});
+    const answer_p2 = try bathroom.simulate(&sink.writer);
     try stdout.print("Part 2: {d}\n", .{answer_p2});
+    try stdout.flush();
 }
 
 test "part 1" {
     var bathroom = try Bathroom(11, 7).initParse(testing.allocator, example);
     defer bathroom.deinit();
     const safety_factor = bathroom.calculateSafetyFactor();
-    print("{?}\n", .{bathroom});
+    print("{f}\n", .{bathroom});
     try expectEqual(12, safety_factor);
 }

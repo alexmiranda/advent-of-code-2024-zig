@@ -10,50 +10,54 @@ const io = std.io;
 const example = @embedFile("example.txt");
 
 pub fn main() !void {
-    var gpa = heap.GeneralPurposeAllocator(.{ .safety = true }){};
+    var gpa: heap.GeneralPurposeAllocator(.{ .safety = true }) = .init;
     defer if (gpa.deinit() == .leak) {
         std.debug.panic("Memory leak!", .{});
     };
     const ally = gpa.allocator();
 
-    const stdout_file = io.getStdOut().writer();
-    var bw = io.bufferedWriter(stdout_file);
-    defer bw.flush() catch {}; // don't forget to flush!
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout = &stdout_writer.interface;
 
     const path = "day01/input.txt";
-    var input_file = std.fs.cwd().openFile(path, .{}) catch |err|
+    var input_file = std.fs.cwd().openFile(path, .{ .mode = .read_only }) catch |err|
         switch (err) {
-        error.FileNotFound, error.AccessDenied => std.debug.panic("Input file is missing", .{}),
-        else => std.debug.panic("Failed to open file: {s}", .{path}),
-    };
+            error.FileNotFound, error.AccessDenied => std.debug.panic("Input file is missing", .{}),
+            else => std.debug.panic("Failed to open file: {s}", .{path}),
+        };
     defer input_file.close();
 
-    const reader = input_file.reader();
-    const part_1 = try distanceBetweenLists(ally, reader);
+    var reader_buffer: [1024]u8 = undefined;
+    var reader = std.fs.File.reader(input_file, &reader_buffer);
+    const part_1 = try distanceBetweenLists(ally, &reader.interface);
 
-    try input_file.seekTo(0);
-    const part_2 = try similarityScore(ally, reader);
+    try reader.seekTo(0);
+    const part_2 = try similarityScore(ally, &reader.interface);
 
-    const stdout = bw.writer();
     try stdout.print("Part 1: {d}\n", .{part_1});
     try stdout.print("Part 2: {d}\n", .{part_2});
+    try stdout.flush();
 }
 
-fn distanceBetweenLists(ally: mem.Allocator, reader: anytype) !u32 {
-    var left_locations = std.ArrayList(i32).init(ally);
-    defer left_locations.deinit();
+fn distanceBetweenLists(ally: mem.Allocator, reader: *std.Io.Reader) !u32 {
+    var left_locations: std.ArrayList(i32) = .empty;
+    defer left_locations.deinit(ally);
 
-    var right_locations = std.ArrayList(i32).init(ally);
-    defer right_locations.deinit();
+    var right_locations: std.ArrayList(i32) = .empty;
+    defer right_locations.deinit(ally);
 
-    var buf: [14]u8 = undefined;
-    while (try reader.readUntilDelimiterOrEof(&buf, '\n')) |read| {
-        if (read.len == 0) continue;
+    while (reader.takeDelimiterExclusive('\n')) |read| {
+        if (read.len == 0) break;
         var it = mem.tokenizeScalar(u8, read, ' ');
         const lval = fmt.parseInt(i32, it.next().?, 10) catch @panic("problem with input: could not parse number");
-        try left_locations.append(lval);
+        try left_locations.append(ally, lval);
         const rval = fmt.parseInt(i32, it.next().?, 10) catch @panic("problem with input: could not parse number");
-        try right_locations.append(rval);
+        try right_locations.append(ally, rval);
+        reader.toss(1); // skip the newline
+    } else |err| switch (err) {
+        error.EndOfStream => {},
+        else => return err,
     }
 
     mem.sort(i32, left_locations.items, {}, std.sort.asc(i32));
@@ -66,22 +70,25 @@ fn distanceBetweenLists(ally: mem.Allocator, reader: anytype) !u32 {
     return total_distance;
 }
 
-fn similarityScore(ally: mem.Allocator, reader: anytype) !u64 {
-    var left_locations = std.ArrayList(i32).init(ally);
-    defer left_locations.deinit();
+fn similarityScore(ally: mem.Allocator, reader: *std.Io.Reader) !u64 {
+    var left_locations: std.ArrayList(i32) = .empty;
+    defer left_locations.deinit(ally);
 
-    var right_locations = std.AutoHashMap(i32, i32).init(ally);
+    var right_locations: std.AutoHashMap(i32, i32) = .init(ally);
     defer right_locations.deinit();
 
-    var buf: [14]u8 = undefined;
-    while (try reader.readUntilDelimiterOrEof(&buf, '\n')) |read| {
-        if (read.len == 0) continue;
+    while (reader.takeDelimiterExclusive('\n')) |read| {
+        if (read.len == 0) break;
         var it = mem.tokenizeScalar(u8, read, ' ');
         const lval = fmt.parseInt(i32, it.next().?, 10) catch @panic("problem with input: could not parse number");
-        try left_locations.append(lval);
+        try left_locations.append(ally, lval);
         const rval = fmt.parseInt(i32, it.next().?, 10) catch @panic("problem with input: could not parse number");
         const gop = try right_locations.getOrPut(rval);
         gop.value_ptr.* = if (gop.found_existing) gop.value_ptr.* + 1 else 1;
+        reader.toss(1); // skip the newline
+    } else |err| switch (err) {
+        error.EndOfStream => {},
+        else => return err,
     }
 
     var similarity_score: u64 = 0;
@@ -92,11 +99,11 @@ fn similarityScore(ally: mem.Allocator, reader: anytype) !u64 {
 }
 
 test "part 1" {
-    var fbs = io.fixedBufferStream(example);
-    try expectEqual(11, distanceBetweenLists(testing.allocator, fbs.reader()));
+    var reader = std.Io.Reader.fixed(example);
+    try expectEqual(11, distanceBetweenLists(testing.allocator, &reader));
 }
 
 test "part 2" {
-    var fbs = io.fixedBufferStream(example);
-    try expectEqual(31, similarityScore(testing.allocator, fbs.reader()));
+    var reader = std.Io.Reader.fixed(example);
+    try expectEqual(31, similarityScore(testing.allocator, &reader));
 }

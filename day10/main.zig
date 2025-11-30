@@ -26,7 +26,7 @@ const Map = struct {
     const Seen = std.AutoHashMap(Trailhead, usize);
 
     fn initParse(ally: std.mem.Allocator, buffer: []const u8) !Map {
-        var grid = std.ArrayListUnmanaged([]const u8){};
+        var grid: std.ArrayList([]const u8) = .empty;
         defer grid.deinit(ally);
 
         var it = std.mem.tokenizeScalar(u8, buffer, '\n');
@@ -49,7 +49,7 @@ const Map = struct {
     }
 
     fn totalScore(self: *Map) !usize {
-        var seen = Seen.init(self.ally);
+        var seen: Seen = .init(self.ally);
         defer seen.deinit();
         for (self.grid, 0..) |row, row_index| {
             for (row, 0..) |col, col_index| {
@@ -63,7 +63,7 @@ const Map = struct {
     }
 
     fn totalRating(self: *Map) !usize {
-        var seen = Seen.init(self.ally);
+        var seen: Seen = .init(self.ally);
         defer seen.deinit();
         for (self.grid, 0..) |row, row_index| {
             for (row, 0..) |col, col_index| {
@@ -123,25 +123,25 @@ const Map = struct {
 };
 
 pub fn main() !void {
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    defer bw.flush() catch {}; // don't forget to flush!
-    const stdout = bw.writer();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout = &stdout_writer.interface;
 
     var input_file = std.fs.cwd().openFile("day10/input.txt", .{ .mode = .read_only }) catch |err|
         {
-        switch (err) {
-            error.FileNotFound => @panic("Input file is missing"),
-            else => panic("{any}", .{err}),
-        }
-    };
+            switch (err) {
+                error.FileNotFound => @panic("Input file is missing"),
+                else => panic("{any}", .{err}),
+            }
+        };
     defer input_file.close();
 
     var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
     defer if (gpa.deinit() == .leak) @panic("Memory leak");
     const ally = gpa.allocator();
 
-    const input = try input_file.readToEndAlloc(ally, 20001);
+    var reader = std.fs.File.reader(input_file, &.{});
+    const input = try reader.interface.readAlloc(ally, 2451);
     defer ally.free(input);
 
     var map = try Map.initParse(ally, input);
@@ -152,6 +152,7 @@ pub fn main() !void {
 
     const answer_p2 = try map.totalRating();
     try stdout.print("Part 2: {d}\n", .{answer_p2});
+    try stdout.flush();
 }
 
 test "part 1 - example 1" {

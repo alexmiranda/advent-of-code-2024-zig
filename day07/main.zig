@@ -20,15 +20,18 @@ const Calibration = struct {
     ally: Allocator,
     equations: []Equation,
 
-    fn initParse(ally: Allocator, reader: anytype) !Calibration {
-        var array = try std.ArrayListUnmanaged(Equation).initCapacity(ally, 10);
+    fn initParse(ally: Allocator, reader: *std.Io.Reader) !Calibration {
+        var array: std.ArrayList(Equation) = try .initCapacity(ally, 10);
         defer array.deinit(ally);
 
-        var buf: [50]u8 = undefined;
-        while (try reader.readUntilDelimiterOrEof(&buf, '\n')) |line| {
+        while (reader.takeDelimiterExclusive('\n')) |line| {
+            reader.toss(1); // skip the newline
             if (line.len == 0) continue;
             const eq = try Equation.initParse(ally, line);
             try array.append(ally, eq);
+        } else |err| switch (err) {
+            error.EndOfStream => {},
+            else => return err,
         }
         return .{ .ally = ally, .equations = try array.toOwnedSlice(ally) };
     }
@@ -53,7 +56,7 @@ const Equation = struct {
     numbers: []u64,
 
     fn initParse(ally: Allocator, buffer: []const u8) !Equation {
-        var array = try std.ArrayListUnmanaged(u64).initCapacity(ally, 10);
+        var array: std.ArrayList(u64) = try .initCapacity(ally, 10);
         defer array.deinit(ally);
 
         const colon_idx = std.mem.indexOfScalarPos(u8, buffer, 1, ':').?;
@@ -75,7 +78,7 @@ const Equation = struct {
     fn repair(self: *Equation, ops: Operators) !u64 {
         const ally = self.ally;
         const State = struct { testValue: u64, slide: usize };
-        var stack = try std.ArrayListUnmanaged(State).initCapacity(ally, pow(usize, ops.count(), self.numbers.len));
+        var stack: std.ArrayList(State) = try .initCapacity(ally, pow(usize, ops.count(), self.numbers.len));
         defer stack.deinit(self.ally);
 
         // print("repairing equation: {d}: {any}\n", .{ self.testValue, self.numbers });
@@ -118,10 +121,9 @@ const Equation = struct {
 };
 
 pub fn main() !void {
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    defer bw.flush() catch {}; // don't forget to flush!
-    const stdout = bw.writer();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout = &stdout_writer.interface;
 
     var input_file = std.fs.cwd().openFile("day07/input.txt", .{ .mode = .read_only }) catch |err| {
         switch (err) {
@@ -131,12 +133,13 @@ pub fn main() !void {
     };
     defer input_file.close();
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
+    var gpa: std.heap.GeneralPurposeAllocator(.{ .safety = true }) = .init;
     defer if (gpa.deinit() == .leak) @panic("Memory leak");
     const ally = gpa.allocator();
 
-    // const reader = std.io.bufferedReader(input_file.reader());
-    const calibration = try Calibration.initParse(ally, input_file.reader());
+    var read_buffer: [1024]u8 = undefined;
+    var reader = std.fs.File.reader(input_file, &read_buffer);
+    const calibration = try Calibration.initParse(ally, &reader.interface);
     defer calibration.deinit();
 
     const ops_p1 = Operators.initMany(&[_]Operator{ .add, .mul });
@@ -146,19 +149,20 @@ pub fn main() !void {
     const ops_p2 = Operators.initFull();
     const answer_p2 = try calibration.totalCalibrationResult(ops_p2);
     try stdout.print("Part 2: {d}\n", .{answer_p2});
+    try stdout.flush();
 }
 
 test "part 1" {
-    var fbs = std.io.fixedBufferStream(example);
-    const calibration = try Calibration.initParse(testing.allocator, fbs.reader());
+    var reader: std.Io.Reader = .fixed(example);
+    const calibration = try Calibration.initParse(testing.allocator, &reader);
     defer calibration.deinit();
     const ops = Operators.initMany(&[_]Operator{ .add, .mul });
     try expectEqual(3749, try calibration.totalCalibrationResult(ops));
 }
 
 test "part 2" {
-    var fbs = std.io.fixedBufferStream(example);
-    const calibration = try Calibration.initParse(testing.allocator, fbs.reader());
+    var reader: std.Io.Reader = .fixed(example);
+    const calibration = try Calibration.initParse(testing.allocator, &reader);
     defer calibration.deinit();
     const ops = Operators.initFull();
     try expectEqual(11387, try calibration.totalCalibrationResult(ops));

@@ -7,18 +7,19 @@ const expectEqual = std.testing.expectEqual;
 const example1 = @embedFile("example1.txt");
 const example2 = @embedFile("example2.txt");
 
-fn parseInput(ally: std.mem.Allocator, reader: anytype) ![]u64 {
-    var list = try std.ArrayList(u64).initCapacity(ally, 8);
-    defer list.deinit();
+fn parseInput(ally: std.mem.Allocator, reader: *std.Io.Reader) ![]u64 {
+    var list: std.ArrayList(u64) = try .initCapacity(ally, 8);
+    defer list.deinit(ally);
 
-    var buf: [8]u8 = undefined;
-    while (try reader.readUntilDelimiterOrEof(&buf, ' ')) |tok| {
-        const s = std.mem.trimRight(u8, tok, "\n");
+    const line = try reader.takeDelimiterExclusive('\n');
+    var it = std.mem.tokenizeScalar(u8, line, ' ');
+    while (it.next()) |tok| {
+        const s = std.mem.trimEnd(u8, tok, "\n");
         const n = try std.fmt.parseInt(u64, s, 10);
-        try list.append(n);
+        try list.append(ally, n);
     }
 
-    return try list.toOwnedSlice();
+    return try list.toOwnedSlice(ally);
 }
 
 fn blink(ally: std.mem.Allocator, list: []u64, comptime n: usize) !usize {
@@ -93,25 +94,26 @@ test split {
 }
 
 pub fn main() !void {
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    defer bw.flush() catch {}; // don't forget to flush!
-    const stdout = bw.writer();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout = &stdout_writer.interface;
 
     var input_file = std.fs.cwd().openFile("day11/input.txt", .{ .mode = .read_only }) catch |err|
         {
-        switch (err) {
-            error.FileNotFound => @panic("Input file is missing"),
-            else => panic("{any}", .{err}),
-        }
-    };
+            switch (err) {
+                error.FileNotFound => @panic("Input file is missing"),
+                else => panic("{any}", .{err}),
+            }
+        };
     defer input_file.close();
 
     var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
     defer if (gpa.deinit() == .leak) @panic("Memory leak");
     const ally = gpa.allocator();
 
-    const input = try parseInput(ally, input_file.reader());
+    var read_buffer: [1024]u8 = undefined;
+    var reader = std.fs.File.reader(input_file, &read_buffer);
+    const input = try parseInput(ally, &reader.interface);
     defer ally.free(input);
 
     const answer_p1 = try blink(ally, input, 25);
@@ -119,19 +121,20 @@ pub fn main() !void {
 
     const answer_p2 = try blink(ally, input, 75);
     try stdout.print("Part 2: {d}\n", .{answer_p2});
+    try stdout.flush();
 }
 
 test "part 1 - example 1" {
-    var fbs = std.io.fixedBufferStream(example1);
-    const input = try parseInput(testing.allocator, fbs.reader());
+    var reader: std.Io.Reader = .fixed(example1);
+    const input = try parseInput(testing.allocator, &reader);
     defer testing.allocator.free(input);
     const stones = try blink(testing.allocator, input, 1);
     try expectEqual(7, stones);
 }
 
 test "part 1 - example 2" {
-    var fbs = std.io.fixedBufferStream(example2);
-    const input = try parseInput(testing.allocator, fbs.reader());
+    var reader: std.Io.Reader = .fixed(example2);
+    const input = try parseInput(testing.allocator, &reader);
     defer testing.allocator.free(input);
     try expectEqual(22, blink(testing.allocator, input, 6));
     try expectEqual(55312, blink(testing.allocator, input, 25));
